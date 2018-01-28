@@ -9,13 +9,18 @@ from urllib.parse import urljoin
 
 class BlogSpider(scrapy.Spider):
     name = "blogs"
-    POST_PER_RSS = 5
-    RSS_PER_POST = 5
-    BLOG_LIMIT = 10
-    INITIAL_URL_FILE = 'urls.txt'
+
+    def __init__(self, name=None, **kwargs):
+        super().__init__(name, **kwargs)
+        self.BLOG_LIMIT = 0
+        self.POST_PER_RSS = 0
+        self.RSS_PER_POST = 0
 
     def start_requests(self):
-        urls = [urljoin(url, '/rss/') for url in open(self.INITIAL_URL_FILE).read().split('\n')]
+        self.BLOG_LIMIT = self.settings.getint('BLOG_LIMIT')
+        self.POST_PER_RSS = self.settings.getint('POST_PER_RSS')
+        self.RSS_PER_POST = self.settings.getint('RSS_PER_POST')
+        urls = [urljoin(url, '/rss/') for url in open(self.settings['INITIAL_URL_FILE']).read().split('\n')]
         print(urls)
         for url in urls:
             yield scrapy.Request(url=url, callback=self.parse_rss)

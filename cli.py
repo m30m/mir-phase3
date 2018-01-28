@@ -50,12 +50,13 @@ def read_results():
     blog_jsons = []
     post_comments = {}
     for json_file in os.listdir(RESULT_DIR):
-        uri = path.join(RESULT_DIR, json_file)
-        item = json.loads(open(uri).read())
-        if item['type'] == 'post':
-            post_comments[item['post_url']] = item['comment_urls']
-        else:
-            blog_jsons.append(item)
+        if json_file.endswith('.json'):
+            uri = path.join(RESULT_DIR, json_file)
+            item = json.loads(open(uri).read())
+            if item['type'] == 'post':
+                post_comments[item['post_url']] = item['comment_urls']
+            else:
+                blog_jsons.append(item)
     return blog_jsons, post_comments
 
 
@@ -104,11 +105,11 @@ def compute_page_rank(blog_objects, alpha):
     return dict(zip(reverse_mapping, page_rank))
 
 
-def add_page_rank():
+def add_page_rank(alpha=0.1):
     blog_jsons, post_comments = read_results()
     blog_objects = [convert_blog(item, post_comments) for item in blog_jsons]
     blog_objects = [blog for blog in blog_objects if blog]
-    page_rank = compute_page_rank(blog_objects, 0.1)
+    page_rank = compute_page_rank(blog_objects, alpha)
     for url in page_rank:
         es.update(index=INDEX_NAME, doc_type='blog', id=url, body={'doc': {'blog': {'page_rank': page_rank[url]}}})
 
@@ -145,8 +146,14 @@ def search(query, weights={}, pr_weight=0):
             },
         })
     res = es.search(index=INDEX_NAME, doc_type='blog', body=body_query)
-    return [(hit['_source']['blog']['url'], hit['_source']['blog']['title'], hit['_source']['blog']['page_rank'],
+    return [(hit['_source']['blog']['url'], hit['_source']['blog']['page_rank'],
              hit['_score']) for hit in res['hits']['hits']]
+
+
+def init_elastic():
+    global ES_HOST, es
+    ES_HOST = input('Enter elastic host: (default is "127.0.0.1")') or '127.0.0.1'
+    es = Elasticsearch(hosts=[ES_HOST])
 
 
 if __name__ == '__main__':
@@ -157,23 +164,56 @@ if __name__ == '__main__':
         print('3) Create Index')
         print('4) Calculate PageRank')
         print('5) Search')
+        print('6) Show Blog')
         print('Q) Quit')
         x = input('')
         if x == '1':
             crawler_settings = Settings()
             crawler_settings.setmodule(settings)
+            INITIAL_URL_FILE = input('Enter start urls file path: (default is "urls.txt")') or 'urls.txt'
+            BLOG_LIMIT = input('Enter blog limit: (default is 10)') or 10
+            POST_PER_RSS = input('Enter number of posts to crawl per blog rss: (default is  5)') or 5
+            RSS_PER_POST = input('Enter number of new blogs to crawl from post: (default is  5)') or 5
+            crawler_settings.set('INITIAL_URL_FILE', INITIAL_URL_FILE)
+            crawler_settings.set('BLOG_LIMIT', BLOG_LIMIT)
+            crawler_settings.set('POST_PER_RSS', POST_PER_RSS)
+            crawler_settings.set('RSS_PER_POST', RSS_PER_POST)
             process = CrawlerProcess(settings=crawler_settings)
             process.crawl(BlogSpider)
             process.start()
         elif x == '2':
             delete_index()
         elif x == '3':
+            RESULT_DIR = input('Enter jsons directory path: (default is "output")') or 'output'
+            init_elastic()
             fill_index()
         elif x == '4':
-            add_page_rank()
+            init_elastic()
+            ALPHA = float(input('Enter alpha for page rank: (default is 0.1)')) or 0.1
+            add_page_rank(alpha=ALPHA)
         elif x == '5':
-            title = input('Enter title:')
-            print(search(query={'title': title}))
+            fields = ['url', 'title', 'posts.post_title', 'posts.post_content']
+            queries = {}
+            weights = {}
+            for field in fields:
+                q_val = input('Enter filter for %s: (Press Enter to skip this field)\n' % field)
+                if q_val:
+                    queries[field] = q_val
+                    try:
+                        w_val = float(
+                            input('Enter weight for filter %s: (Press Enter for default weight 1.0)\n' % field))
+                        weights[field] = w_val
+                    except ValueError:
+                        pass
+            try:
+                pr_weight = float(input('Enter weight for page rank: (Press Enter for default weight 1.0)\n'))
+            except:
+                pr_weight = 1
+            print(search(query=queries, weights=weights, pr_weight=pr_weight))
+        elif x == '6':
+            url = input('Enter URL (e.g https://salamfereshte.blog.ir):')
+            print(
+                json.dumps(es.get(index=INDEX_NAME, doc_type='blog', id=url)['_source'], indent=2, ensure_ascii=False))
         elif x == 'Q':
             break
         else:
